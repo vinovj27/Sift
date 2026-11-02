@@ -84,7 +84,10 @@ function complete(word) {
   const sign = /^[+\-"]/.test(last) ? last[0] : '';
   run(parts.join('') + sign + word + ' ');
 }
-function run(q) { $('q').value = q; hide(); search(q); $('q').focus(); }
+function run(q) {
+  $('q').value = q; hide(); search(q); $('q').focus();
+  try { history.replaceState(null, '', q.trim() ? '?q=' + encodeURIComponent(q.trim()) : location.pathname); } catch {}
+}
 
 $('q').addEventListener('input', e => {
   clearTimeout(timer);
@@ -104,6 +107,8 @@ $('q').addEventListener('keydown', e => {
 });
 $('q').addEventListener('blur', () => setTimeout(hide, 100));
 document.querySelectorAll('.tips button').forEach(b => b.onclick = () => run(b.dataset.q));
+const initial = new URLSearchParams(location.search).get('q');
+if (initial) run(initial);
 fetch('/api/stats').then(r => r.json()).then(s => {
   $('corpus').textContent = `Searching ${s.documents.toLocaleString()} documents from the ${s.corpus} · BM25 ranking, phrases, +required, -excluded`;
 });
