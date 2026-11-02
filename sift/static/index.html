@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sift</title>
+<style>
+  :root { --bg:#fbfaf7; --panel:#ffffff; --ink:#1b1f2a; --muted:#646b7a; --line:#e4e2dc; --accent:#3346d3; --mark:#ffe58a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141b; --panel:#191c25; --ink:#e7e9ef; --muted:#9298a8; --line:#2a2e3b; --accent:#8e9cff; --mark:#6b5a12; color-scheme:dark; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:860px; margin:auto; padding:48px 20px 64px; }
+  h1 { margin:0; font:800 44px/1 Georgia, "Times New Roman", serif; letter-spacing:-.03em; }
+  h1 span { color:var(--accent); }
+  .sub { color:var(--muted); margin:6px 0 24px; }
+  .box { position:relative; }
+  input { width:100%; font:inherit; font-size:19px; padding:15px 18px; border-radius:12px; border:1.5px solid var(--line); background:var(--panel); color:var(--ink); outline:none; }
+  input:focus { border-color:var(--accent); }
+  #suggest { position:absolute; left:0; right:0; top:calc(100% + 4px); background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; z-index:5; }
+  #suggest button { display:block; width:100%; text-align:left; padding:9px 18px; border:0; background:none; color:var(--ink); font:inherit; cursor:pointer; }
+  #suggest button:hover, #suggest button.on { background:var(--bg); }
+  .tips { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 6px; }
+  .tips button { font:13px ui-monospace, monospace; padding:5px 9px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--muted); cursor:pointer; }
+  .tips button:hover { color:var(--ink); border-color:var(--accent); }
+  .meta { color:var(--muted); font-size:14px; margin:22px 0 8px; min-height:1.5em; }
+  .meta a { color:var(--accent); cursor:pointer; font-weight:600; }
+  ol { list-style:none; padding:0; margin:0; }
+  li { padding:16px 0; border-bottom:1px solid var(--line); }
+  .title { font:600 18px/1.35 ui-monospace, "SFMono-Regular", Menlo, monospace; color:var(--accent); word-break:break-word; }
+  .src { color:var(--muted); font-size:12.5px; font-family:ui-monospace, monospace; margin:2px 0 6px; word-break:break-all; }
+  .snip { margin:0; }
+  mark { background:var(--mark); color:inherit; padding:0 2px; border-radius:3px; }
+  .score { float:right; font:12px ui-monospace, monospace; color:var(--muted); margin-left:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>S<span>i</span>ft</h1>
+  <p class="sub" id="corpus">Full-text search with BM25 ranking</p>
+  <div class="box">
+    <input id="q" type="search" placeholder="Search… try: serialize object to json" autocomplete="off" autofocus aria-label="Search">
+    <div id="suggest" hidden></div>
+  </div>
+  <div class="tips" aria-label="Example queries">
+    <button data-q='"thread pool"'>"thread pool"</button>
+    <button data-q="parse command line arguments">parse command line arguments</button>
+    <button data-q="+socket timeout -ftp">+socket timeout -ftp</button>
+    <button data-q="subprocesss timout">subprocesss timout</button>
+  </div>
+  <div class="meta" id="meta"></div>
+  <ol id="results"></ol>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+let timer, active = -1, seq = 0;
+
+async function search(q) {
+  const id = ++seq;
+  if (!q.trim()) { $('results').innerHTML = ''; $('meta').textContent = ''; return; }
+  const r = await (await fetch('/api/search?k=15&q=' + encodeURIComponent(q))).json();
+  if (id !== seq) return;
+  let meta = `${r.total.toLocaleString()} results in ${r.took_ms.toFixed(1)} ms`;
+  if (r.suggestion) meta += ` · Did you mean <a id="dym">${esc(r.suggestion)}</a>?`;
+  $('meta').innerHTML = meta;
+  if (r.suggestion) $('dym').onclick = () => run(r.suggestion);
+  $('results').innerHTML = r.hits.map(h => `<li><span class="score">${h.score.toFixed(2)}</span><div class="title">${esc(h.title)}</div><div class="src">${esc(h.source)}</div><p class="snip">${h.snippet}</p></li>`).join('');
+}
+
+async function suggest(q) {
+  const word = q.split(/\s+/).pop().replace(/^[+\-"]/, '');
+  if (word.length < 2) return hide();
+  const list = await (await fetch('/api/suggest?q=' + encodeURIComponent(word))).json();
+  if (!list.length) return hide();
+  active = -1;
+  $('suggest').innerHTML = list.map(w => `<button type="button">${esc(w)}</button>`).join('');
+  $('suggest').hidden = false;
+  [...$('suggest').children].forEach(b => b.onmousedown = e => { e.preventDefault(); complete(b.textContent); });
+}
+function hide() { $('suggest').hidden = true; active = -1; }
+function complete(word) {
+  const parts = $('q').value.split(/(\s+)/);
+  const last = parts.pop();
+  const sign = /^[+\-"]/.test(last) ? last[0] : '';
+  run(parts.join('') + sign + word + ' ');
+}
+function run(q) { $('q').value = q; hide(); search(q); $('q').focus(); }
+
+$('q').addEventListener('input', e => {
+  clearTimeout(timer);
+  const q = e.target.value;
+  timer = setTimeout(() => { search(q); suggest(q); }, 120);
+});
+$('q').addEventListener('keydown', e => {
+  const items = [...$('suggest').children];
+  if ($('suggest').hidden || !items.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items.forEach((b, i) => b.classList.toggle('on', i === active));
+  } else if (e.key === 'Enter' && active >= 0) {
+    e.preventDefault(); complete(items[active].textContent);
+  } else if (e.key === 'Escape') hide();
+});
+$('q').addEventListener('blur', () => setTimeout(hide, 100));
+document.querySelectorAll('.tips button').forEach(b => b.onclick = () => run(b.dataset.q));
+fetch('/api/stats').then(r => r.json()).then(s => {
+  $('corpus').textContent = `Searching ${s.documents.toLocaleString()} documents from the ${s.corpus} · BM25 ranking, phrases, +required, -excluded`;
+});
+</script>
+</body>
+</html>
